@@ -15,7 +15,7 @@ Responsabilidades:
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 import time
 
 
@@ -27,6 +27,7 @@ import time
 ESTADO_NUEVO       = "NUEVO"
 ESTADO_LISTO       = "LISTO"
 ESTADO_EJECUTANDO  = "EJECUTANDO"
+ESTADO_BLOQUEADO   = "BLOQUEADO"
 ESTADO_TERMINADO   = "TERMINADO"
 
 @dataclass
@@ -42,6 +43,8 @@ class Proceso:
         tiempo_llegada (int): Instante en que el proceso llega a la cola de listos.
         uso_cpu      (float): Porcentaje de uso de CPU simulado (0.0 - 100.0).
         acceso_archivos (bool): Indica si el proceso requiere acceso a archivos.
+        secuencia_paginas (List[int]): Secuencia de páginas virtuales que accede.
+        archivos_requeridos (List[str]): Lista de archivos que el proceso necesita bloquear.
 
         # Campos internos (calculados durante la simulación)
         estado            : Estado actual del proceso.
@@ -59,6 +62,8 @@ class Proceso:
     tiempo_llegada   : int         = 0
     uso_cpu          : float       = 0.0
     acceso_archivos  : bool        = False
+    secuencia_paginas: List[int]   = field(default_factory=list)
+    archivos_requeridos: List[str] = field(default_factory=list)
 
     # Campos internos — no se pasan al crear el proceso
     estado           : str         = field(default=ESTADO_NUEVO, init=False)
@@ -72,6 +77,12 @@ class Proceso:
     def __post_init__(self):
         # Al crearse, la ráfaga restante es igual a la duración total
         self.tiempo_restante = self.duracion
+        # Generar secuencia de páginas por defecto si está vacía
+        if not self.secuencia_paginas:
+            self.secuencia_paginas = [i % 5 for i in range(self.duracion)]
+        # Asignar archivo por defecto si requiere acceso a archivos y no tiene
+        if self.acceso_archivos and not self.archivos_requeridos:
+            self.archivos_requeridos = ["datos.txt"]
 
     def __str__(self):
         return (
@@ -382,6 +393,168 @@ def imprimir_diagrama_gantt(registro: List[dict], titulo: str = "") -> None:
     linea_inferior += str(registro[-1]["fin"])
     print(linea_inferior)
     print("  " + "-" * 60 + "\n")
+
+
+# =============================================================================
+# SIMULADOR INTEGRADO (PROCESOS + MEMORIA + ARCHIVOS)
+# =============================================================================
+
+def simular_sistema_completo(
+    procesos: List[Proceso],
+    algoritmo_planif: str = "RR",
+    quantum: int = 3,
+    algoritmo_memoria: str = "FIFO",
+    num_marcos_memoria: int = 4,
+    lista_archivos: Optional[List[str]] = None
+) -> Dict:
+    """
+    Simulador que integra la planificación de CPU, la gestión de memoria física
+    (paginación por demanda y reemplazo) y la gestión de acceso a archivos concurrentes con bloqueos.
+    """
+    from memoria import MemoriaFisica
+    from archivos import ManejadorArchivos
+
+    # Reiniciar métricas
+    for p in procesos:
+        p.tiempo_restante  = p.duracion
+        p.estado           = ESTADO_NUEVO
+        p.tiempo_inicio    = None
+        p.tiempo_fin       = None
+        p.tiempo_espera    = 0
+        p.tiempo_ejecucion = 0
+        p.tiempo_retorno   = 0
+
+    mem_fisica = MemoriaFisica(numero_marcos=num_marcos_memoria, algoritmo=algoritmo_memoria)
+    man_archivos = ManejadorArchivos(lista_archivos)
+
+    cola_llegadas = sorted(procesos, key=lambda p: p.tiempo_llegada)
+    tiempo_actual = 0
+    registro = []
+    listos = []
+    bloqueados = []
+    proceso_en_cpu = None
+    quantum_restante = 0
+
+    historial_pasos = []
+
+    while cola_llegadas or listos or bloqueados or proceso_en_cpu:
+        # 1. Procesos que llegan en este instante
+        llegaron = [p for p in cola_llegadas if p.tiempo_llegada <= tiempo_actual]
+        for p in llegaron:
+            p.estado = ESTADO_LISTO
+            listos.append(p)
+            cola_llegadas.remove(p)
+
+        # 2. Revisar si procesos bloqueados pueden obtener sus recursos
+        for p in list(bloqueados):
+            exito = True
+            for archivo in p.archivos_requeridos:
+                if not man_archivos.solicitar_acceso(p.pid, archivo, tiempo_actual):
+                    exito = False
+                    break
+            if exito:
+                p.estado = ESTADO_LISTO
+                listos.append(p)
+                bloqueados.remove(p)
+
+        # 3. Planificador de CPU si está libre
+        if proceso_en_cpu is None:
+            if listos:
+                if algoritmo_planif == "RR":
+                    proceso_en_cpu = listos.pop(0)
+                    quantum_restante = quantum
+                elif algoritmo_planif == "PRIORIDAD":
+                    listos.sort(key=lambda x: (x.prioridad, x.tiempo_llegada))
+                    proceso_en_cpu = listos.pop(0)
+                
+                proceso_en_cpu.estado = ESTADO_EJECUTANDO
+                if proceso_en_cpu.tiempo_inicio is None:
+                    proceso_en_cpu.tiempo_inicio = tiempo_actual
+            else:
+                # CPU Ociosa
+                historial_pasos.append({
+                    "tiempo": tiempo_actual,
+                    "cpu": "OCIOSA",
+                    "pagina_solicitada": "-",
+                    "resultado_memoria": "-",
+                    "memoria": mem_fisica.obtener_estado_visual(),
+                    "archivos": man_archivos.obtener_estado_visual()
+                })
+                tiempo_actual += 1
+                continue
+
+        # 4. Intentar adquirir bloqueos si requiere archivos
+        if proceso_en_cpu.acceso_archivos:
+            exito = True
+            for archivo in proceso_en_cpu.archivos_requeridos:
+                if not man_archivos.solicitar_acceso(proceso_en_cpu.pid, archivo, tiempo_actual):
+                    exito = False
+                    break
+            if not exito:
+                # Proceso se bloquea y libera la CPU
+                proceso_en_cpu.estado = ESTADO_BLOQUEADO
+                bloqueados.append(proceso_en_cpu)
+                proceso_en_cpu = None
+                continue
+
+        # 5. Ejecutar en CPU 1 unidad de tiempo
+        # Acceder a memoria (Paginación por demanda)
+        pagina = proceso_en_cpu.secuencia_paginas[proceso_en_cpu.tiempo_ejecucion % len(proceso_en_cpu.secuencia_paginas)]
+        hit, victima = mem_fisica.acceder_pagina(proceso_en_cpu.pid, pagina, tiempo_actual)
+        
+        historial_pasos.append({
+            "tiempo": tiempo_actual,
+            "cpu": f"P{proceso_en_cpu.pid} ({proceso_en_cpu.nombre})",
+            "pagina_solicitada": pagina,
+            "resultado_memoria": "HIT" if hit else f"FALLO (Víctima: {victima})" if victima else "FALLO (Cargado en marco libre)",
+            "memoria": mem_fisica.obtener_estado_visual(),
+            "archivos": man_archivos.obtener_estado_visual()
+        })
+
+        # Registrar Gantt
+        if registro and registro[-1]["pid"] == proceso_en_cpu.pid and registro[-1]["fin"] == tiempo_actual:
+            registro[-1]["fin"] += 1
+            registro[-1]["duracion_turno"] += 1
+        else:
+            registro.append({
+                "pid": proceso_en_cpu.pid,
+                "nombre": proceso_en_cpu.nombre,
+                "inicio": tiempo_actual,
+                "fin": tiempo_actual + 1,
+                "duracion_turno": 1
+            })
+
+        proceso_en_cpu.tiempo_restante -= 1
+        proceso_en_cpu.tiempo_ejecucion += 1
+        tiempo_actual += 1
+
+        # Verificar si terminó
+        if proceso_en_cpu.tiempo_restante == 0:
+            proceso_en_cpu.estado = ESTADO_TERMINADO
+            proceso_en_cpu.tiempo_fin = tiempo_actual
+            proceso_en_cpu.tiempo_retorno = proceso_en_cpu.tiempo_fin - proceso_en_cpu.tiempo_llegada
+            proceso_en_cpu.tiempo_espera = proceso_en_cpu.tiempo_retorno - proceso_en_cpu.duracion
+            
+            # Liberar memoria y archivos ocupados
+            mem_fisica.liberar_paginas_proceso(proceso_en_cpu.pid)
+            man_archivos.liberar_todos_los_archivos_proceso(proceso_en_cpu.pid, tiempo_actual)
+            
+            proceso_en_cpu = None
+        else:
+            # Si es RR, descontar quantum
+            if algoritmo_planif == "RR":
+                quantum_restante -= 1
+                if quantum_restante == 0:
+                    proceso_en_cpu.estado = ESTADO_LISTO
+                    listos.append(proceso_en_cpu)
+                    proceso_en_cpu = None
+
+    return {
+        "registro": registro,
+        "historial": historial_pasos,
+        "fallos_memoria": mem_fisica.fallos_pagina,
+        "bitacora_archivos": man_archivos.bitacora
+    }
 
 
 # =============================================================================
