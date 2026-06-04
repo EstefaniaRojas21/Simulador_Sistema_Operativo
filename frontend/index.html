@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Simulador de Sistema Operativo - Planificación de CPU, Gestión de Memoria y Archivos - UPTC">
+    <title>Simulador SO | UPTC</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header" id="app-header">
+            <div class="header-badge">UPTC &middot; Sistemas Operativos</div>
+            <h1>Simulador de Sistema Operativo</h1>
+            <p class="header-subtitle">Planificaci&oacute;n de CPU &middot; Gesti&oacute;n de Memoria &middot;
+                Gesti&oacute;n de Archivos</p>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs" id="main-tabs">
+            <button class="tab-btn active" data-tab="dashboard" id="btn-dashboard">
+                <span class="tab-icon">&#x1F4CA;</span> Dashboard
+            </button>
+            <button class="tab-btn" data-tab="cpu" id="btn-cpu">
+                <span class="tab-icon">&#x2699;</span> Planificaci&oacute;n CPU
+            </button>
+            <button class="tab-btn" data-tab="memoria" id="btn-memoria">
+                <span class="tab-icon">&#x1F4BE;</span> Memoria
+            </button>
+            <button class="tab-btn" data-tab="archivos" id="btn-archivos">
+                <span class="tab-icon">&#x1F4C1;</span> Archivos
+            </button>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Tab -->
+            <section class="tab-content active" id="tab-dashboard">
+                <div class="loading" id="loading-indicator">
+                    <div class="spinner"></div>
+                    <span>Ejecutando simulaciones...</span>
+                </div>
+                <div id="dashboard-content" style="display:none"></div>
+            </section>
+
+            <!-- CPU Scheduling Tab -->
+            <section class="tab-content" id="tab-cpu">
+                <div id="cpu-content"></div>
+            </section>
+
+            <!-- Memory Management Tab -->
+            <section class="tab-content" id="tab-memoria">
+                <div id="memoria-content"></div>
+            </section>
+
+            <!-- File Management Tab -->
+            <section class="tab-content" id="tab-archivos">
+                <div id="archivos-content"></div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Universidad Pedag&oacute;gica y Tecnol&oacute;gica de Colombia &mdash; Proyecto Final Sistemas Operativos
+            </p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
